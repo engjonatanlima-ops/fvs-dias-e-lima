@@ -199,6 +199,10 @@
     <section class="card">
       <h2>Registros salvos neste aparelho</h2>
       <div id="histList"><div class="empty">Nenhum registro salvo ainda.</div></div>
+      <div class="sig-row" style="margin-top:12px;">
+        <span class="hint">Vai copiar este arquivo para outra obra?</span>
+        <button class="linkbtn" id="btnReset" type="button" style="color:#9C1F1F;">Resetar este arquivo</button>
+      </div>
     </section>
   </div>
 </main>
@@ -1119,6 +1123,19 @@ $("btnSave").addEventListener("click", ()=>{
 $("btnPdf").addEventListener("click", ()=>{
   if(!validate()) return;
   generatePdf(buildRecord());
+});
+
+$("btnReset").addEventListener("click", ()=>{
+  const ok = window.confirm(
+    "Isso vai apagar a configuração desta obra e todos os registros salvos neste aparelho, " +
+    "deixando o arquivo como se fosse a primeira vez que foi aberto.\n\n" +
+    "Use isso antes de copiar este arquivo para uma obra nova.\n\n" +
+    "Deseja continuar?"
+  );
+  if(!ok) return;
+  try{ localStorage.removeItem(CONFIG_KEY); }catch(e){}
+  try{ localStorage.removeItem(REGISTROS_KEY); }catch(e){}
+  location.reload();
 });
 
 // ---------- Boot ----------
