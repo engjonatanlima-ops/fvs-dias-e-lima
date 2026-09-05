@@ -902,9 +902,13 @@ function loadHistory(){
         <div class="who">FVS ${rec.etapaCod} — ${rec.etapaNome}</div>
         <div class="meta">${rec.responsavel} · ${dt} ${rec.ncCount>0 ? `· ${rec.ncCount} NC` : ""}</div>
       </div>
-      <button type="button">PDF</button>
+      <div style="display:flex; gap:6px;">
+        <button type="button" class="btnPdfHist">PDF</button>
+        <button type="button" class="btnDelHist" style="border-color:#9C1F1F;color:#9C1F1F;">Excluir</button>
+      </div>
     `;
-    div.querySelector("button").addEventListener("click", ()=> generatePdf(rec));
+    div.querySelector(".btnPdfHist").addEventListener("click", ()=> generatePdf(rec));
+    div.querySelector(".btnDelHist").addEventListener("click", ()=> deleteRecord(rec.criadoEm));
     box.appendChild(div);
   });
 }
@@ -937,6 +941,18 @@ function saveRecord(rec){
   try{ records = JSON.parse(safeGetLocal(REGISTROS_KEY) || "[]"); }catch(e){}
   records.push(rec);
   return safeSetLocal(REGISTROS_KEY, JSON.stringify(records));
+}
+
+function deleteRecord(criadoEm){
+  const ok = window.confirm("Excluir este registro salvo neste aparelho? O PDF já baixado não é afetado.");
+  if(!ok) return;
+  let records = [];
+  try{ records = JSON.parse(safeGetLocal(REGISTROS_KEY) || "[]"); }catch(e){}
+  records = records.filter(r => r.criadoEm !== criadoEm);
+  safeSetLocal(REGISTROS_KEY, JSON.stringify(records));
+  toast("Registro excluído.");
+  loadHistory();
+  renderStatusEtapas();
 }
 
 // ---------- PDF ----------
