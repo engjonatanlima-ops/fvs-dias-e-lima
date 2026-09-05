@@ -88,6 +88,13 @@
   .hidden{display:none !important;}
   .banner{font-size:12.5px;background:#FFF6E0;border:1px solid #EAD9A0;color:#5B4A12;border-radius:5px;
     padding:10px 12px;margin-bottom:12px;}
+  .status-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 4px;
+    border-bottom:1px solid var(--line);font-size:13.5px;}
+  .status-row:last-child{border-bottom:none;}
+  .tag{font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;white-space:nowrap;}
+  .tag.st-c{background:var(--ok-bg);color:var(--ok-ink);}
+  .tag.st-nc{background:var(--nc-bg);color:var(--nc-ink);}
+  .tag.st-na{background:var(--na-bg);color:var(--na-ink);}
 </style>
 </head>
 <body>
@@ -133,6 +140,11 @@
       <label class="field">Etapa</label>
       <select id="etapaSelect"></select>
       <div class="etapa-meta" id="etapaMeta"></div>
+    </section>
+
+    <section class="card">
+      <h2>Status das etapas desta obra</h2>
+      <div class="scope-list" id="statusEtapas"></div>
     </section>
 
     <section class="card">
@@ -700,6 +712,10 @@ function applyConfig(){
   $("fResp").value = CONFIG.responsavelPadrao || "";
   populateEtapaSelect();
   loadHistory();
+  renderStatusEtapas();
+  // as assinaturas foram criadas com a área ainda escondida (largura 0);
+  // agora que appArea está visível, redimensiona os canvases de verdade.
+  requestAnimationFrame(()=>{ sigFiscal.resize(); sigExec.resize(); });
 }
 
 // ---------- Etapa / itens ----------
@@ -826,7 +842,8 @@ function setupSignaturePad(canvasId, clearBtnId){
 
   return {
     hasSignature: () => state.hasSignature,
-    dataURL: () => canvas.toDataURL("image/png")
+    dataURL: () => canvas.toDataURL("image/png"),
+    resize: resizeCanvas
   };
 }
 
@@ -885,6 +902,29 @@ function loadHistory(){
     `;
     div.querySelector("button").addEventListener("click", ()=> generatePdf(rec));
     box.appendChild(div);
+  });
+}
+
+function renderStatusEtapas(){
+  const box = $("statusEtapas");
+  if(!box || !CONFIG) return;
+  let records = [];
+  try{ records = JSON.parse(safeGetLocal(REGISTROS_KEY) || "[]"); }catch(e){}
+  records = records.filter(r => r.obra === CONFIG.obra);
+  const visiveis = FICHAS.filter(f => !CONFIG.escopo || CONFIG.escopo.includes(f.cod));
+  box.innerHTML = "";
+  visiveis.forEach(f=>{
+    const recs = records.filter(r=>r.etapaCod===f.cod)
+      .sort((a,b)=> new Date(b.criadoEm) - new Date(a.criadoEm));
+    const last = recs[0];
+    let label, cls;
+    if(!last){ label = "Não iniciado"; cls = "st-na"; }
+    else if(last.aprovacao === "SIM" && (last.ncCount||0) === 0){ label = "Aprovado"; cls = "st-c"; }
+    else { label = "Pendente"; cls = "st-nc"; }
+    const row = document.createElement("div");
+    row.className = "status-row";
+    row.innerHTML = `<span>FVS ${f.cod} — ${f.nome}</span><span class="tag ${cls}">${label}</span>`;
+    box.appendChild(row);
   });
 }
 
@@ -1068,7 +1108,12 @@ $("btnSave").addEventListener("click", ()=>{
   if(!validate()) return;
   const rec = buildRecord();
   const ok = saveRecord(rec);
-  if(ok){ toast("Registro salvo neste aparelho."); loadHistory(); }
+  if(ok){
+    toast("Registro salvo — baixando o PDF do arquivo…");
+    loadHistory();
+    renderStatusEtapas();
+    generatePdf(rec);
+  }
   else { toast("Não foi possível salvar neste navegador."); }
 });
 $("btnPdf").addEventListener("click", ()=>{
