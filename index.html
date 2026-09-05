@@ -51,8 +51,8 @@
   .obs{margin-top:10px;}
   .obs textarea{width:100%;min-height:46px;border:1px solid var(--line);border-radius:5px;padding:8px;
     font-size:14px;font-family:inherit;resize:vertical;}
-  canvas#sigPad{width:100%;height:160px;border:1.5px dashed var(--line);border-radius:5px;background:#fff;
-    touch-action:none;display:block;}
+  canvas#sigPad,canvas#sigPadExec{width:100%;height:160px;border:1.5px dashed var(--line);border-radius:5px;background:#fff;
+    touch-action:none;display:block;margin-top:8px;}
   .sig-row{display:flex;justify-content:space-between;align-items:center;margin-top:8px;}
   .sig-row .hint{font-size:12px;color:var(--ink-soft);}
   .linkbtn{background:none;border:none;color:var(--navy);font-weight:600;font-size:13px;
@@ -128,8 +128,6 @@
   <div id="appArea" class="hidden">
     <section class="card">
       <h2>Registro</h2>
-      <label class="field">Responsável técnico</label>
-      <input type="text" id="fResp">
       <label class="field">Data</label>
       <input type="date" id="fData">
       <label class="field">Etapa</label>
@@ -144,11 +142,45 @@
     </section>
 
     <section class="card">
-      <h2>Assinatura</h2>
+      <h2>Registro de não conformidade e ação corretiva</h2>
+      <label class="field">Descrição da não conformidade</label>
+      <textarea id="ncDescricao" placeholder="Descreva a não conformidade encontrada (se houver)"></textarea>
+      <label class="field">Ação corretiva proposta</label>
+      <textarea id="ncAcao" placeholder="O que será feito para corrigir"></textarea>
+      <label class="field">Prazo para correção</label>
+      <input type="date" id="ncPrazo">
+      <label class="field">Responsável pela correção</label>
+      <input type="text" id="ncResponsavel" placeholder="Nome do responsável">
+    </section>
+
+    <section class="card">
+      <h2>Executante</h2>
+      <label class="field">Nome</label>
+      <input type="text" id="fExecutante" placeholder="Nome de quem executou o serviço">
+      <canvas id="sigPadExec"></canvas>
+      <div class="sig-row">
+        <span class="hint">Assinatura do executante</span>
+        <button class="linkbtn" id="btnClearSigExec" type="button">Limpar</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Fiscalização / Responsável técnico</h2>
+      <label class="field">Nome</label>
+      <input type="text" id="fResp" placeholder="Nome de quem está vistoriando">
       <canvas id="sigPad"></canvas>
       <div class="sig-row">
-        <span class="hint">Assine com o dedo na área acima</span>
+        <span class="hint">Assinatura da fiscalização / responsável técnico</span>
         <button class="linkbtn" id="btnClearSig" type="button">Limpar</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Aprovação</h2>
+      <label class="field">Aprovado para início da próxima etapa?</label>
+      <div class="radio-row">
+        <label><input type="radio" name="aprovacao" value="SIM" checked> Sim</label>
+        <label><input type="radio" name="aprovacao" value="NAO"> Não</label>
       </div>
     </section>
 
@@ -743,66 +775,94 @@ function updateProgress(){
   const st = getStage(currentEtapaCod);
   if(!st) return;
   const total = st.itens.length;
-  const done = Object.keys(currentStatus).length;
-  const nc = Object.values(currentStatus).filter(v=>v==="NC").length;
-  $("progress").innerHTML = `<b>${done}/${total}</b> itens marcados` + (nc>0 ? ` · <span style="color:#9C1F1F">${nc} não conforme</span>` : "");
+  const vals = Object.values(currentStatus);
+  const c = vals.filter(v=>v==="C").length;
+  const nc = vals.filter(v=>v==="NC").length;
+  const na = vals.filter(v=>v==="NA").length;
+  const done = vals.length;
+  $("progress").innerHTML = `<b>${done}/${total}</b> itens marcados — Resumo: <b>${c} C</b> / ` +
+    (nc>0 ? `<span style="color:#9C1F1F"><b>${nc} NC</b></span>` : `${nc} NC`) + ` / ${na} NA`;
 }
 
-// ---------- Signature ----------
-const canvas = $("sigPad");
-const ctx = canvas.getContext("2d");
-let drawing = false, hasSignature = false;
-function resizeCanvas(){
-  const ratio = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  canvas.width = rect.width * ratio;
-  canvas.height = rect.height * ratio;
-  ctx.scale(ratio, ratio);
-  ctx.lineWidth = 2.2; ctx.lineCap = "round"; ctx.strokeStyle = "#12213D";
-}
-resizeCanvas();
-window.addEventListener("resize", ()=>{
-  const data = hasSignature ? canvas.toDataURL() : null;
-  resizeCanvas();
-  if(data){
-    const img = new Image();
-    img.onload = ()=> ctx.drawImage(img,0,0,canvas.getBoundingClientRect().width, canvas.getBoundingClientRect().height);
-    img.src = data;
+// ---------- Signature (reutilizável para 2 assinaturas) ----------
+function setupSignaturePad(canvasId, clearBtnId){
+  const canvas = $(canvasId);
+  const ctx = canvas.getContext("2d");
+  const state = { drawing: false, hasSignature: false };
+
+  function resizeCanvas(){
+    const ratio = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * ratio;
+    canvas.height = rect.height * ratio;
+    ctx.scale(ratio, ratio);
+    ctx.lineWidth = 2.2; ctx.lineCap = "round"; ctx.strokeStyle = "#12213D";
   }
-});
-function getPos(e){
-  const rect = canvas.getBoundingClientRect();
-  const t = e.touches ? e.touches[0] : e;
-  return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+  resizeCanvas();
+  window.addEventListener("resize", ()=>{
+    const data = state.hasSignature ? canvas.toDataURL() : null;
+    resizeCanvas();
+    if(data){
+      const img = new Image();
+      img.onload = ()=> ctx.drawImage(img,0,0,canvas.getBoundingClientRect().width, canvas.getBoundingClientRect().height);
+      img.src = data;
+    }
+  });
+  function getPos(e){
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+  }
+  function start(e){ state.drawing = true; state.hasSignature = true; const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x,p.y); e.preventDefault(); }
+  function move(e){ if(!state.drawing) return; const p = getPos(e); ctx.lineTo(p.x,p.y); ctx.stroke(); e.preventDefault(); }
+  function end(){ state.drawing = false; }
+  canvas.addEventListener("mousedown", start);
+  canvas.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", end);
+  canvas.addEventListener("touchstart", start, {passive:false});
+  canvas.addEventListener("touchmove", move, {passive:false});
+  canvas.addEventListener("touchend", end);
+  $(clearBtnId).addEventListener("click", ()=>{ ctx.clearRect(0,0,canvas.width,canvas.height); state.hasSignature = false; });
+
+  return {
+    hasSignature: () => state.hasSignature,
+    dataURL: () => canvas.toDataURL("image/png")
+  };
 }
-function start(e){ drawing = true; hasSignature = true; const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x,p.y); e.preventDefault(); }
-function move(e){ if(!drawing) return; const p = getPos(e); ctx.lineTo(p.x,p.y); ctx.stroke(); e.preventDefault(); }
-function end(){ drawing = false; }
-canvas.addEventListener("mousedown", start);
-canvas.addEventListener("mousemove", move);
-window.addEventListener("mouseup", end);
-canvas.addEventListener("touchstart", start, {passive:false});
-canvas.addEventListener("touchmove", move, {passive:false});
-canvas.addEventListener("touchend", end);
-$("btnClearSig").addEventListener("click", ()=>{ ctx.clearRect(0,0,canvas.width,canvas.height); hasSignature = false; });
+
+const sigFiscal = setupSignaturePad("sigPad", "btnClearSig");
+const sigExec = setupSignaturePad("sigPadExec", "btnClearSigExec");
 
 // ---------- Record / local history ----------
 function validate(){
-  if(!$("fResp").value.trim()) { toast("Preencha o responsável técnico."); return false; }
+  if(!$("fExecutante").value.trim()) { toast("Preencha o nome do executante."); return false; }
+  if(!$("fResp").value.trim()) { toast("Preencha o nome da fiscalização / responsável técnico."); return false; }
   if(!getStage(currentEtapaCod)) { toast("Selecione uma etapa."); return false; }
-  if(!hasSignature) { toast("Colete a assinatura antes de continuar."); return false; }
+  if(!sigExec.hasSignature()) { toast("Colete a assinatura do executante."); return false; }
+  if(!sigFiscal.hasSignature()) { toast("Colete a assinatura da fiscalização / responsável técnico."); return false; }
   return true;
 }
 
 function buildRecord(){
   const st = getStage(currentEtapaCod);
   const itens = st.itens.map((it,i)=>({ desc: it.desc, status: currentStatus[i] || "—", obs: currentObs[i] || "" }));
+  const cCount = itens.filter(i=>i.status==="C").length;
   const ncCount = itens.filter(i=>i.status==="NC").length;
+  const naCount = itens.filter(i=>i.status==="NA").length;
   return {
     obra: CONFIG.obra, cliente: CONFIG.cliente, endereco: CONFIG.endereco,
+    executante: $("fExecutante").value.trim(),
     responsavel: $("fResp").value.trim(), data: $("fData").value,
     etapaCod: currentEtapaCod, etapaNome: st.nome, norma: st.norma,
-    itens, ncCount, assinatura: canvas.toDataURL("image/png"), criadoEm: new Date().toISOString()
+    itens, cCount, ncCount, naCount,
+    ncDescricao: $("ncDescricao").value.trim(),
+    ncAcao: $("ncAcao").value.trim(),
+    ncPrazo: $("ncPrazo").value,
+    ncResponsavel: $("ncResponsavel").value.trim(),
+    aprovacao: document.querySelector('input[name="aprovacao"]:checked').value,
+    assinaturaExec: sigExec.dataURL(),
+    assinatura: sigFiscal.dataURL(),
+    criadoEm: new Date().toISOString()
   };
 }
 
@@ -836,10 +896,16 @@ function saveRecord(rec){
 }
 
 // ---------- PDF ----------
+function ensureSpace(doc, y, needed){
+  if(y + needed > 780){ doc.addPage(); return 56; }
+  return y;
+}
+
 function generatePdf(rec){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: "pt", format: "a4" });
-  const marginX = 48;
+  const marginX = 40;
+  const pageRight = 555;
   let y = 56;
 
   doc.setFillColor(18,33,61);
@@ -859,49 +925,139 @@ function generatePdf(rec){
   doc.text(`Norma(s) de referência: ${rec.norma || ""}`, marginX, y);
   y += 22;
 
-  doc.setDrawColor(220,224,230); doc.line(marginX, y, 547, y); y += 18;
+  doc.setDrawColor(220,224,230); doc.line(marginX, y, pageRight, y); y += 18;
 
   doc.setFontSize(10.5); doc.setTextColor(20,22,26);
   doc.text(`Obra: ${rec.obra}`, marginX, y); y += 15;
   if(rec.cliente){ doc.text(`Cliente: ${rec.cliente}`, marginX, y); y += 15; }
   if(rec.endereco){ doc.text(`Endereço: ${rec.endereco}`, marginX, y); y += 15; }
-  doc.text(`Responsável técnico: ${rec.responsavel}`, marginX, y); y += 15;
   const dt = rec.data ? String(rec.data).split("-").reverse().join("/") : "";
   doc.text(`Data: ${dt}`, marginX, y); y += 22;
 
-  doc.setFont("helvetica","bold"); doc.setFontSize(10.5);
-  doc.text("Itens verificados", marginX, y); y += 14;
+  // ---- Tabela de itens (cabecalho estilo planilha) ----
+  const colItem = marginX;
+  const colDesc = marginX + 26;
+  const descW = 300;
+  const colNorma = colDesc + descW + 8;
+  const normaW = 90;
+  const colConf = colNorma + normaW + 8;
+  const rowHeaderH = 20;
 
-  const colStatusX = 470;
-  rec.itens.forEach((it, i)=>{
-    if(y > 740){ doc.addPage(); y = 56; }
-    doc.setFont("helvetica","normal"); doc.setFontSize(9.5);
-    const lines = doc.splitTextToSize(`${i+1}. ${it.desc}`, 400);
-    doc.text(lines, marginX, y);
-    const sc = it.status === "C" ? [30,123,52] : it.status === "NC" ? [156,31,31] : [86,93,107];
-    doc.setTextColor(...sc); doc.setFont("helvetica","bold");
-    doc.text(it.status === "C" ? "Conforme" : it.status === "NC" ? "Não conf." : it.status === "NA" ? "N/A" : "—", colStatusX, y);
+  function drawTableHeader(){
+    doc.setFillColor(18,33,61);
+    doc.rect(marginX, y, pageRight - marginX, rowHeaderH, "F");
+    doc.setTextColor(255,255,255);
+    doc.setFont("helvetica","bold"); doc.setFontSize(8.5);
+    doc.text("Item", colItem + 4, y + 13);
+    doc.text("Descrição do Serviço / Critério de Verificação", colDesc, y + 13);
+    doc.text("Norma", colNorma, y + 13);
+    doc.text("Conf.", colConf, y + 13);
+    y += rowHeaderH;
     doc.setTextColor(20,22,26);
-    y += lines.length * 12;
-    if(it.obs){
-      doc.setFont("helvetica","italic"); doc.setFontSize(8.5); doc.setTextColor(86,93,107);
-      const obsLines = doc.splitTextToSize(`Obs.: ${it.obs}`, 400);
-      doc.text(obsLines, marginX+10, y);
-      y += obsLines.length * 11;
-      doc.setTextColor(20,22,26);
+  }
+
+  drawTableHeader();
+
+  rec.itens.forEach((it, i)=>{
+    doc.setFont("helvetica","normal"); doc.setFontSize(8.7);
+    const descLines = doc.splitTextToSize(it.desc, descW);
+    const normaLines = doc.splitTextToSize(it.norma || "", normaW);
+    const obsLines = it.obs ? doc.splitTextToSize(`Obs.: ${it.obs}`, descW) : [];
+    const lineCount = Math.max(descLines.length, normaLines.length, 1);
+    const rowH = lineCount * 10 + (obsLines.length ? obsLines.length * 9 + 4 : 0) + 8;
+
+    if(y + rowH > 780){ doc.addPage(); y = 56; drawTableHeader(); }
+
+    doc.setDrawColor(220,224,230);
+    doc.rect(marginX, y, pageRight - marginX, rowH);
+
+    doc.setFont("helvetica","normal"); doc.setFontSize(8.7); doc.setTextColor(20,22,26);
+    doc.text(String(i+1), colItem + 4, y + 11);
+    doc.text(descLines, colDesc, y + 11);
+    doc.setFontSize(7.6); doc.setTextColor(86,93,107);
+    doc.text(normaLines, colNorma, y + 11);
+
+    const sc = it.status === "C" ? [30,123,52] : it.status === "NC" ? [156,31,31] : it.status === "NA" ? [86,93,107] : [86,93,107];
+    doc.setTextColor(...sc); doc.setFont("helvetica","bold"); doc.setFontSize(8.2);
+    doc.text(it.status === "C" ? "C" : it.status === "NC" ? "NC" : it.status === "NA" ? "N/A" : "—", colConf + 4, y + 11);
+
+    if(obsLines.length){
+      doc.setFont("helvetica","italic"); doc.setFontSize(7.8); doc.setTextColor(86,93,107);
+      doc.text(obsLines, colDesc, y + 11 + lineCount * 10 + 4);
     }
-    y += 8;
+    y += rowH;
   });
 
   y += 10;
-  if(y > 650){ doc.addPage(); y = 56; }
-  doc.setDrawColor(220,224,230); doc.line(marginX, y, 547, y); y += 20;
-  doc.setFont("helvetica","bold"); doc.setFontSize(10.5);
-  doc.text("Assinatura do responsável", marginX, y); y += 8;
-  try{ doc.addImage(rec.assinatura, "PNG", marginX, y, 200, 70); }catch(e){}
-  y += 78;
-  doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(86,93,107);
-  doc.text(rec.responsavel, marginX, y);
+  y = ensureSpace(doc, y, 20);
+  doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.setTextColor(20,22,26);
+  doc.text(
+    `Resumo:  ${rec.cCount || 0} Conforme   ·   ${rec.ncCount || 0} Não Conforme   ·   ${rec.naCount || 0} N/A`,
+    marginX, y
+  );
+  y += 22;
+
+  // ---- Registro de nao conformidade ----
+  if(rec.ncDescricao || rec.ncAcao || rec.ncResponsavel || rec.ncPrazo){
+    y = ensureSpace(doc, y, 90);
+    doc.setFillColor(18,33,61);
+    doc.rect(marginX, y, pageRight - marginX, 18, "F");
+    doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(9.5);
+    doc.text("REGISTRO DE NÃO CONFORMIDADE E AÇÃO CORRETIVA", marginX + 6, y + 12.5);
+    y += 26;
+    doc.setTextColor(20,22,26);
+
+    const ncField = (label, value) => {
+      doc.setFont("helvetica","bold"); doc.setFontSize(8.8);
+      doc.text(label, marginX, y);
+      doc.setFont("helvetica","normal");
+      const lines = doc.splitTextToSize(value || "-", pageRight - marginX - 130);
+      doc.text(lines, marginX + 130, y);
+      y += Math.max(lines.length * 11, 14);
+    };
+    ncField("Descrição da não conformidade:", rec.ncDescricao);
+    ncField("Ação corretiva proposta:", rec.ncAcao);
+    ncField("Prazo para correção:", rec.ncPrazo ? String(rec.ncPrazo).split("-").reverse().join("/") : "");
+    ncField("Responsável pela correção:", rec.ncResponsavel);
+    y += 14;
+  }
+
+  // ---- Assinaturas lado a lado ----
+  y = ensureSpace(doc, y, 130);
+  doc.setDrawColor(220,224,230); doc.line(marginX, y, pageRight, y); y += 20;
+
+  const colW = (pageRight - marginX - 20) / 2;
+  const colExecX = marginX;
+  const colFiscalX = marginX + colW + 20;
+
+  doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.setTextColor(20,22,26);
+  doc.text("EXECUTANTE", colExecX, y);
+  doc.text("FISCALIZAÇÃO / RESPONSÁVEL TÉCNICO", colFiscalX, y);
+  y += 8;
+
+  try{ doc.addImage(rec.assinaturaExec, "PNG", colExecX, y, colW * 0.8, 65); }catch(e){}
+  try{ doc.addImage(rec.assinatura, "PNG", colFiscalX, y, colW * 0.8, 65); }catch(e){}
+  y += 70;
+
+  doc.setDrawColor(180,185,195);
+  doc.line(colExecX, y, colExecX + colW, y);
+  doc.line(colFiscalX, y, colFiscalX + colW, y);
+  y += 12;
+
+  doc.setFont("helvetica","normal"); doc.setFontSize(8.8); doc.setTextColor(86,93,107);
+  doc.text(rec.executante || "-", colExecX, y);
+  doc.text(rec.responsavel || "-", colFiscalX, y);
+  y += 12;
+  doc.text(`Data: ${dt}`, colExecX, y);
+  doc.text(`Data: ${dt}`, colFiscalX, y);
+  y += 26;
+
+  // ---- Aprovacao ----
+  y = ensureSpace(doc, y, 24);
+  doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(20,22,26);
+  const sim = rec.aprovacao === "SIM" ? "(X)" : "( )";
+  const nao = rec.aprovacao === "NAO" ? "(X)" : "( )";
+  doc.text(`Aprovado para início da próxima etapa:   ${sim} SIM     ${nao} NÃO`, marginX, y);
 
   const fname = `FVS_${rec.etapaCod}_${(rec.obra||"obra").replace(/[^a-zA-Z0-9]+/g,"_")}_${rec.data}.pdf`;
   doc.save(fname);
